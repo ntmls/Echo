@@ -1,0 +1,224 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title></title>
+    <script>
+
+        // ------------------------------------------------------------
+
+        var model = {
+            display: {
+                width: 400,
+                height: 400
+            },
+            startTime: 0,
+            elapsedTime: 0.0,
+            frameRate: 10
+        };
+
+        var onLoad = function () {
+            initModel(model); 
+            tick();
+        };
+
+        var tick = function () {
+            var cvs = document.getElementById("display");
+            var ctx = cvs.getContext("2d");
+            var now = new Date().getTime() / 1000;
+            if (model.elapsedTime == 0.0 && model.startTime == 0.0) {
+                model.startTime = now;
+            } else {
+                model.elapsedTime = now - model.startTime;
+            }
+            model.elapsedTime
+            model.lastTime = now;
+            updateModel(model);
+            render(ctx, model)
+            setTimeout(tick, (1 / model.frameRate) * 1000);
+        };
+
+        // ------------------------------------------------------------
+
+        var initModel = function (model) {
+            var id = 0;
+            var rows = 10;
+            var cols = 10;
+            var lastCol = [];
+            var blockSize = model.display.width / rows;
+            model.nodes = [];
+            model.messages = [];
+            for (var i = 0; i < 10; i++) {
+                var thisCol = [];
+                for (var j = 0; j < 10; j++) {
+                    var node = {
+                        id: id,
+                        x: i * blockSize + (blockSize / 2),
+                        y: j * blockSize + (blockSize / 2),
+                        r: model.display.width / rows / 6,
+                        neighbors: []
+                    };
+                    model.nodes.push(node);
+                    thisCol.push(node);
+                    if (j > 0) {
+                        node.neighbors.push(id - 1); 
+                        model.nodes[id - 1].neighbors.push(id);
+                    }
+                    id += 1;
+                }
+                if (i > 0) {
+                    for (var j = 0; j < thisCol.length; j++) {
+                        lastCol[j].neighbors.push(thisCol[j].id);
+                        thisCol[j].neighbors.push(lastCol[j].id);
+                    }
+                }
+                lastCol = thisCol;
+            }
+        };
+
+        var updateModel = function (model) {
+        
+            // pick an initiator
+            if (model.messages.length == 0) {
+                var r = Math.floor(model.nodes.length * Math.random());
+                model.initiator = r;
+                var msg = {
+                    type: "initiate-wave",
+                    from: undefined,
+                    to: r, 
+                    sentAt: 0,
+                    arriveAt: 1.0
+                };
+                model.messages.push(msg);
+            }
+
+            // process messages
+            var inFlightMessages = model.messages.filter(function (x) { return x.arriveAt > model.elapsedTime; });
+            var arrivedMessages = model.messages.filter(function (x) { return x.arriveAt <= model.elapsedTime; });
+            var newMessages = flatten(arrivedMessages.map(function(x) { 
+                var node = model.nodes[x.to];
+                return processMessage(node, x, model.elapsedTime);
+            }));
+            model.messages = inFlightMessages.concat(newMessages);
+
+        };
+
+        var flatten = function (ar) {
+            var result = [];
+            for (var i = 0; i < ar.length; i++) {
+                result =  result.concat(ar[i]);
+            }
+            return result;
+        }
+
+        var processMessage = function (node, message, time) {
+            
+            var idToWave = function (initiator) {
+                return function(id) {
+                    return {
+                        type: "wave",
+                        from: node.id,
+                        to: id,
+                        sentAt: time,
+                        arriveAt: time + .75 + Math.random() * .25,
+                        initiator: initiator
+                    };
+                };
+            }
+
+            switch (message.type) {
+                case "initiate-wave":
+                    node.messageCount = 0;
+                    node.parent = undefined;
+                    return node.neighbors.map(idToWave(node.id));
+
+                case "wave":
+                    if (node.parent === undefined && message.initiator != node.id) {
+                        node.parent = message.from;
+                        node.messageCount = 1;
+                        var sendTo = node.neighbors.filter(function (x) { return x != node.parent });
+                        return sendTo.map(idToWave(message.initiator));
+                    } else {
+                        node.messageCount += 1;
+                        if (node.messageCount == node.neighbors.length) {
+                            if (node.parent == undefined) {
+                                //decide
+                                node.messageCount = 0;
+                                node.parent = undefined;
+                                //alert("decide");
+                            } else {
+                                var returnMessage = idToWave(message.initiator)(node.parent)
+                                node.messageCount = 0;
+                                node.parent = undefined;
+                                return [returnMessage];
+                            }
+                        } else {
+                            return [];
+                        } 
+                    }
+                    
+                default:
+                    return [];
+            }
+        };
+
+        var render = function (ctx, model) {
+            ctx.fillStyle = "grey";
+            ctx.fillRect(0, 0, model.display.width, model.display.height);
+            ctx.fillStyle = "white";
+
+            // draw connections
+            // draw nodes
+            for (var i = 0; i < model.nodes.length; i++) {
+                var node = model.nodes[i];
+                for (var j=0; j < node.neighbors.length; j++) {
+                    var toNode = model.nodes[node.neighbors[j]];
+                    ctx.beginPath(); 
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(toNode.x, toNode.y);
+                    ctx.stroke();
+                }
+            }
+
+            // draw nodes
+            for (var i = 0; i < model.nodes.length; i++) {
+                var node = model.nodes[i];
+                if (node.id == model.initiator) { 
+                    ctx.fillStyle = "red";
+                } else if (node.messageCount == 0 || node.messageCount === undefined) {
+                    ctx.fillStyle = "white";
+                } else {
+                    ctx.fillStyle = "black";
+                }
+                ctx.beginPath(); 
+                ctx.arc(node.x, node.y, node.r,0, 2 * Math.PI, 1);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, node.r, 0, 2 * Math.PI, 1);
+                ctx.stroke();
+            }
+
+            // draw in-flight messages between nodes
+            var inFlightMessages = model.messages
+                .filter(function (x) { return x.arriveAt > model.elapsedTime; })
+                .filter(function(x) { return x.from !== undefined && x.to !== undefined; });
+            for (var i = 0; i < inFlightMessages.length; i++) {
+                var msg = inFlightMessages[i];
+                var fromNode = model.nodes[msg.from];
+                var toNode = model.nodes[msg.to];
+                var t = 1 - ((msg.arriveAt - model.elapsedTime) / (msg.arriveAt - msg.sentAt))
+                var x = (toNode.x - fromNode.x) * t + fromNode.x;
+                var y = (toNode.y - fromNode.y) * t + fromNode.y;
+                ctx.beginPath();
+                ctx.arc(x, y, fromNode.r * .33, 0, 2 * Math.PI, 1);
+                ctx.fill();
+            }
+        };
+
+    </script>
+</head>
+<body onload="onLoad()">
+    <Canvas id="display" width="400" height="400"></Canvas>
+</body>
+</html>
